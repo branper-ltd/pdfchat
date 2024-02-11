@@ -1,3 +1,6 @@
 files
 jj
+chroma_db
+chroma
 __pycache__
+*.venv
