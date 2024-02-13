@@ -20,8 +20,13 @@ from langchain_community.vectorstores import Chroma
 
 from chromadb.utils import embedding_functions
 from chromadb import Documents, EmbeddingFunction, Embeddings
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from typing import List
 
 import chromadb
+from langchain_core.retrievers import BaseRetriever
+
 
 class MyEmbeddingFunction(EmbeddingFunction):
     def __call__(self, input: Documents) -> Embeddings:
@@ -46,23 +51,37 @@ custom = MyEmbeddingFunction()
 
 
 persistent_client = chromadb.PersistentClient()
-# collection = persistent_client.get_or_create_collection("collection_name")
-# collection.add(ids=["1", "2", "3"], documents=["a", "b", "c"])
 
-# langchain_chroma = Chroma(
-#     client=persistent_client,
-#     collection_name="collection_name",
-#     embedding_function=custom,
-# )
+class CustomRetriever1(BaseRetriever):
+    def __init__(self, dbs):
+        self.dbs = dbs
 
-# print("There are", langchain_chroma._collection.count(), "in the collection")
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        # Use your existing retriever to get the documents
+        documents = []
+        for db in self.dbs.values():
+            documents.extend(db.search(query))
+        
+        # Sort the documents by "source"
+        documents = sorted(documents, key=lambda doc: doc.metadata.get('source'))
+        
+        return documents
+    
+    dbs: dict
 
+
+class CustomRetriever(BaseRetriever):
+    
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        return [Document(page_content=query)]
 
 if not os.path.exists('files'):
     os.mkdir('files')
 
-if not os.path.exists('jj'):
-    os.mkdir('jj')
 
 if 'template' not in st.session_state:
     template = """You are a knowledgeable chatbot, here to help with questions of the user. Your tone should be professional and informative.
@@ -139,7 +158,8 @@ def pdf_document_qa(
     #     collection_name="collection_name",
     #     embedding_function=custom,
     # )
-    db2 = langchain_chroma.from_documents(docs,custom, persist_directory="./chroma_db")
+    # db2 = langchain_chroma.from_documents(docs,custom, persist_directory="./chroma_db")
+    db2 = langchain_chroma.from_documents(docs,custom)
     
     print("There are", db2._collection.count(), "in the collection")
     
@@ -169,11 +189,28 @@ def pdf_document_qa(
         #         "memory": st.session_state.memory,
         #     }
         # )
+
+        # llm_model = Ollama(
+
+        llm_model = st.session_state.llm
+        #     base_url="http://20.86.65.94:11434",
+        #     model="llama2",
+        #     verbose=True,
+        #     callback_manager=CallbackManager([StreamingStdOutCallbackHandler()])
+        #     )
+        retriever = CustomRetriever(db2)
+
+        print("Creating qa_chain")
+
         qa_chain = RetrievalQA.from_chain_type(
-            llm=st.session_state.llm,
-            retriever=st.session_state.retriever,
-            chain_type_kwargs={"prompt": st.session_state.prompt}
+            llm=llm_model,
+            retriever=retriever,
+            chain_type_kwargs={
+                "prompt": st.session_state.prompt,
+                "memory": st.session_state.memory
+                }
         )
+
         st.session_state.qa_chain = qa_chain
     
     response = st.session_state.qa_chain(user_input)
